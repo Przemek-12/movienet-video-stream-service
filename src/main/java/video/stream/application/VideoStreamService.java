@@ -1,6 +1,7 @@
 package video.stream.application;
 
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,15 +32,15 @@ public class VideoStreamService {
 
     public ResponseEntity<byte[]> prepareContent(String range, Long videoId) throws IOException {
 
-        FileInputStream fis = new FileInputStream(getPath(videoId));
-        Long fileSize = Long.valueOf(fis.available());
-        String[] ranges = range.replace("bytes=", "").split("-");
+        FileInputStream fis = getFileInputStream(videoId);
+        Long fileSize = getFileSize(fis);
+        String[] ranges = getRanges(range);
 
-        long rangeStart = Long.parseLong(ranges[0]);
+        long rangeStart = getRangeStart(ranges);
         long rangeEnd = getRangeEnd(ranges, rangeStart, fileSize);
         byte[] data = readByteRange(fis, rangeStart, rangeEnd);
 
-        String contentLength = String.valueOf((rangeEnd - rangeStart) + 1);
+        String contentLength = getContentLength(rangeStart, rangeEnd);
 
         return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                 .header(HttpHeaders.CONTENT_TYPE, CONTENT_TYPE_PROPERTY)
@@ -47,6 +48,26 @@ public class VideoStreamService {
                 .header(HttpHeaders.CONTENT_LENGTH, contentLength)
                 .header(HttpHeaders.CONTENT_RANGE, prepareContentRangeHeader(rangeStart, rangeEnd, fileSize))
                 .body(data);
+    }
+
+    private FileInputStream getFileInputStream(Long videoId) throws FileNotFoundException {
+        return new FileInputStream(getPath(videoId));
+    }
+
+    private String getPath(Long videoId) {
+        return videoServiceFeign.getVideoFilePath(videoId).getPath();
+    }
+
+    private Long getFileSize(FileInputStream fis) throws IOException {
+        return Long.valueOf(fis.available());
+    }
+
+    private String[] getRanges(String range) {
+        return range.replace("bytes=", "").split("-");
+    }
+
+    private long getRangeStart(String[] ranges) {
+        return Long.parseLong(ranges[0]);
     }
 
     private long getRangeEnd(String[] ranges, long rangeStart, Long fileSize) {
@@ -63,6 +84,10 @@ public class VideoStreamService {
             rangeEnd = fileSize - 1;
         }
         return rangeEnd;
+    }
+
+    private String getContentLength(long rangeStart, long rangeEnd) {
+        return String.valueOf((rangeEnd - rangeStart) + 1);
     }
 
     private byte[] readByteRange(FileInputStream fis, long start, long end) throws IOException {
@@ -82,9 +107,5 @@ public class VideoStreamService {
                 .append("/")
                 .append(fileSize)
                 .toString();
-    }
-
-    private String getPath(Long videoId) {
-        return videoServiceFeign.getVideoFilePath(videoId).getPath();
     }
 }
