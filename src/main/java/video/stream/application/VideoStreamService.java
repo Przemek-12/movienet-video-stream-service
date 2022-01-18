@@ -1,8 +1,9 @@
 package video.stream.application;
 
+import java.io.BufferedInputStream;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
@@ -10,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
+import video.stream.application.exception.FileOperationException;
 import video.stream.application.feign.VideoServiceFeign;
 
 @Service
@@ -17,6 +19,8 @@ public class VideoStreamService {
 
     private final String CONTENT_TYPE_PROPERTY = "video/mp4";
     private final String ACCEPT_RANGES_PROPERTY = "bytes";
+    private final long INIT_BYTE_RANGE = 17000L;
+    private final long BYTE_RANGE = 280000L;
 
     private final VideoServiceFeign videoServiceFeign;
 
@@ -25,23 +29,27 @@ public class VideoStreamService {
         this.videoServiceFeign = videoServiceFeign;
     }
 
-//  String VIDEO_PATH = "C:\\Users\\przem\\Videos\\Free YouTube Downloader\\MassEffect.mp4";
-//    String VIDEO_PATH = "C:\\Users\\przem\\Videos\\Free YouTube Downloader\\Mass Effect 2 Soundtrack - Suicide Mission [Extended].mp4";
-//  String VIDEO_PATH = "C:\\Users\\przem\\Desktop\\pierdoły\\betrayal\\VID_20210227_192913.mp4";
+    public ResponseEntity<byte[]> prepareContent(String range, Long videoId) throws FileOperationException {
+        String filePath = getPath(videoId);
+        try (BufferedInputStream inputStream = new BufferedInputStream(new FileInputStream(filePath))) {
+            return prepareContent(inputStream, range);
+        } catch (IOException e) {
+            throw new FileOperationException();
+        }
+    }
 
+    private String getPath(Long videoId) {
+        return videoServiceFeign.getVideoFilePath(videoId).getPath();
+    }
 
-    public ResponseEntity<byte[]> prepareContent(String range, Long videoId) throws IOException {
-
-        FileInputStream fis = getFileInputStream(videoId);
-        Long fileSize = getFileSize(fis);
+    private ResponseEntity<byte[]> prepareContent(InputStream inputStream, String range)
+            throws IOException {
+        Long fileSize = getFileSize(inputStream);
         String[] ranges = getRanges(range);
-
         long rangeStart = getRangeStart(ranges);
         long rangeEnd = getRangeEnd(ranges, rangeStart, fileSize);
-        byte[] data = readByteRange(fis, rangeStart, rangeEnd);
-
+        byte[] data = readByteRange(inputStream, rangeStart, rangeEnd);
         String contentLength = getContentLength(rangeStart, rangeEnd);
-
         return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                 .header(HttpHeaders.CONTENT_TYPE, CONTENT_TYPE_PROPERTY)
                 .header(HttpHeaders.ACCEPT_RANGES, ACCEPT_RANGES_PROPERTY)
@@ -50,16 +58,8 @@ public class VideoStreamService {
                 .body(data);
     }
 
-    private FileInputStream getFileInputStream(Long videoId) throws FileNotFoundException {
-        return new FileInputStream(getPath(videoId));
-    }
-
-    private String getPath(Long videoId) {
-        return videoServiceFeign.getVideoFilePath(videoId).getPath();
-    }
-
-    private Long getFileSize(FileInputStream fis) throws IOException {
-        return Long.valueOf(fis.available());
+    private Long getFileSize(InputStream inputStream) throws IOException {
+        return Long.valueOf(inputStream.available());
     }
 
     private String[] getRanges(String range) {
@@ -76,9 +76,9 @@ public class VideoStreamService {
             rangeEnd = Long.parseLong(ranges[1]);
         }
         if (rangeStart == 0) {
-            rangeEnd = rangeStart + 17000;
+            rangeEnd = rangeStart + INIT_BYTE_RANGE;
         } else {
-            rangeEnd = rangeStart + 280000;
+            rangeEnd = rangeStart + BYTE_RANGE;
         }
         if (fileSize < rangeEnd) {
             rangeEnd = fileSize - 1;
@@ -90,11 +90,9 @@ public class VideoStreamService {
         return String.valueOf((rangeEnd - rangeStart) + 1);
     }
 
-    private byte[] readByteRange(FileInputStream fis, long start, long end) throws IOException {
-        fis.skipNBytes(start);
-        byte[] result = fis.readNBytes((int) end - (int) start + 1);
-        fis.close();
-        return result;
+    private byte[] readByteRange(InputStream inputStream, long start, long end) throws IOException {
+        inputStream.skipNBytes(start);
+        return inputStream.readNBytes((int) end - (int) start + 1);
     }
 
     private String prepareContentRangeHeader(long rangeStart, long rangeEnd, Long fileSize) {
