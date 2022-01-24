@@ -1,26 +1,30 @@
 package video.stream.application;
 
-import java.io.BufferedInputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
+import org.apache.commons.lang.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
+import lombok.extern.slf4j.Slf4j;
 import video.stream.application.exception.FileOperationException;
 import video.stream.application.feign.VideoServiceFeign;
 
 @Service
+@Slf4j
 public class VideoStreamService {
 
-    private final String CONTENT_TYPE_PROPERTY = "video/mp4";
-    private final String ACCEPT_RANGES_PROPERTY = "bytes";
-    private final long INIT_BYTE_RANGE = 17000L;
-    private final long BYTE_RANGE = 280000L;
+    protected static final String CONTENT_TYPE_PROPERTY = "video/mp4";
+    protected static final String ACCEPT_RANGES_PROPERTY = "bytes";
+    protected static final long INIT_BYTE_RANGE = 17000L;
+    protected static final long BYTE_RANGE = 280000L;
+    protected static final String WRONG_RANGE_ARG_ERROR_MSG = "The argument \"range\" is not valid.";
+    private static final String BYTES_PREFIX = "bytes=";
 
     private final VideoServiceFeign videoServiceFeign;
 
@@ -31,9 +35,10 @@ public class VideoStreamService {
 
     public ResponseEntity<byte[]> prepareContent(String range, Long videoId) throws FileOperationException {
         String filePath = getPath(videoId);
-        try (BufferedInputStream inputStream = new BufferedInputStream(new FileInputStream(filePath))) {
+        try (InputStream inputStream = new FileInputStream(filePath)) {
             return prepareContent(inputStream, range);
         } catch (IOException e) {
+            log.error(e.getMessage(), e);
             throw new FileOperationException();
         }
     }
@@ -63,7 +68,31 @@ public class VideoStreamService {
     }
 
     private String[] getRanges(String range) {
-        return range.replace("bytes=", "").split("-");
+        checkIfRangeHasValidPrefix(range);
+        String[] ranges = range.replace(BYTES_PREFIX, "").split("-");
+        checkIfRangesHaveValidLength(ranges);
+        checkIfRangesHaveValidValues(ranges);
+        return ranges;
+    }
+
+    private void checkIfRangeHasValidPrefix(String range) {
+        if (!range.startsWith(BYTES_PREFIX)) {
+            throw new IllegalArgumentException(WRONG_RANGE_ARG_ERROR_MSG);
+        }
+    }
+
+    private void checkIfRangesHaveValidLength(String[] ranges) {
+        if (ranges.length == 0 || ranges.length > 2) {
+            throw new IllegalArgumentException(WRONG_RANGE_ARG_ERROR_MSG);
+        }
+    }
+
+    private void checkIfRangesHaveValidValues(String[] ranges) {
+        for (int i = 0; i < ranges.length; i++) {
+            if (!StringUtils.isNumeric(ranges[i])) {
+                throw new IllegalArgumentException(WRONG_RANGE_ARG_ERROR_MSG);
+            }
+        }
     }
 
     private long getRangeStart(String[] ranges) {
